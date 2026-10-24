@@ -14,7 +14,7 @@ const invoiceFields = {
   description: 'description', notes: 'notes',
 };
 const transactionFields = {
-  transaction_type: 'transaction_type', transaction_date: 'transaction_date', amount: 'amount',
+  transaction_type: 'transaction_type', transaction_date: 'transaction_date', transaction_at: 'transaction_at', amount: 'amount',
   currency: 'currency', category_id: 'category_id', project_id: 'project_id',
   party_name: 'party_name', payment_method: 'payment_method', reference: 'reference',
   description: 'description', notes: 'notes',
@@ -66,6 +66,97 @@ router.get('/categories', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: 'Could not load finance categories' });
   }
+});
+
+router.get('/payees', async (req, res) => {
+  try {
+    const [rows] = await db.query('select * from public.payee_balances order by name');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: 'Could not load payees' }); }
+});
+
+router.post('/payees', async (req, res) => {
+  try {
+    const { name, email, phone, notes } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'Person name is required.' });
+    const [result] = await db.query(
+      'insert into public.payees (name, email, phone, notes) values (?, ?, ?, ?)',
+      [String(name).trim(), email || null, phone || null, notes || null]
+    );
+    const [rows] = await db.query('select * from public.payee_balances where id = ?', [result.insertId]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: 'Could not create payee' }); }
+});
+
+router.get('/payables', async (req, res) => {
+  try {
+    const [rows] = await db.query('select * from public.project_payable_balances order by created_at desc, id desc');
+    res.json(rows);
+  } catch (error) { res.status(500).json({ error: 'Could not load project payables' }); }
+});
+
+router.post('/payables', async (req, res) => {
+  try {
+    const { payee_id, project_id, title, amount_due, due_date, notes } = req.body || {};
+    if (!payee_id || !project_id || !title || !Number.isFinite(Number(amount_due)) || Number(amount_due) <= 0) {
+      return res.status(400).json({ error: 'Person, project, title, and a positive amount are required.' });
+    }
+    const [result] = await db.query(
+      `insert into public.project_payables (payee_id, project_id, title, amount_due, due_date, notes)
+       values (?, ?, ?, ?, ?::date, ?)`,
+      [payee_id, project_id, String(title).trim(), Number(amount_due), due_date || null, notes || null]
+    );
+    const [rows] = await db.query('select * from public.project_payable_balances where id = ?', [result.insertId]);
+    res.status(201).json(rows[0]);
+  } catch (error) { res.status(500).json({ error: 'Could not add project payable' }); }
+});
+
+router.post('/payables/:id/payments', async (req, res) => {
+  let client;
+  try {
+    const { amount, transaction_date, transaction_at, payment_method, reference, notes } = req.body || {};
+    const paymentAmount = Number(amount);
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      return res.status(400).json({ error: 'Enter a positive payment amount.' });
+    }
+    client = await db.pool.connect();
+    await client.query('begin');
+    const obligation = await client.query(
+      `select ob.*, pe.name as payee_name from public.project_payables ob
+       join public.payees pe on pe.id=ob.payee_id where ob.id=$1 for update of ob`, [req.params.id]
+    );
+    if (!obligation.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Payable not found.' }); }
+    const item = obligation.rows[0];
+    const paid = await client.query(
+      `select coalesce(sum(amount),0) as paid from public.financial_transactions
+       where payable_id=$1 and transaction_type='expense'`, [item.id]
+    );
+    const remaining = Number(item.amount_due) - Number(paid.rows[0].paid);
+    if (paymentAmount > remaining + 0.001) {
+      await client.query('rollback');
+      return res.status(400).json({ error: `Payment exceeds the remaining balance of ${remaining.toFixed(2)}.` });
+    }
+    const category = await client.query(
+      `select id from public.finance_categories where transaction_type='expense' and is_active=true
+       order by case when name='Freelancer' then 0 else 1 end, id limit 1`
+    );
+    await client.query(
+      `insert into public.financial_transactions
+       (transaction_type, transaction_date, transaction_at, amount, currency, category_id,
+        project_id, payable_id, party_name, payment_method, reference, description, notes)
+       values ('expense', coalesce($1::date, current_date), coalesce($2::timestamptz, now()),
+        $3, 'BDT', $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [transaction_date || null, transaction_at || null, paymentAmount, category.rows[0]?.id || null, item.project_id,
+        item.id, item.payee_name, payment_method || null, reference || null,
+        `Payment: ${item.title}`, notes || null]
+    );
+    await client.query('commit');
+    const balance = await client.query('select * from public.project_payable_balances where id=$1', [item.id]);
+    res.status(201).json(balance.rows[0]);
+  } catch (error) {
+    if (client) await client.query('rollback').catch(() => {});
+    res.status(500).json({ error: 'Could not record payable payment' });
+  } finally { client?.release(); }
 });
 
 router.get('/invoices', async (req, res) => {
@@ -158,10 +249,10 @@ router.post('/transactions', async (req, res) => {
     }
     const [result] = await db.query(
       `insert into public.financial_transactions
-       (transaction_type, transaction_date, amount, currency, category_id, project_id,
+       (transaction_type, transaction_date, transaction_at, amount, currency, category_id, project_id,
         party_name, payment_method, reference, description, notes)
-       values (?, coalesce(?::date, current_date), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [body.transaction_type, body.transaction_date || null, Number(body.amount), body.currency || 'BDT',
+       values (?, coalesce(?::date, current_date), coalesce(?::timestamptz, now()), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [body.transaction_type, body.transaction_date || null, body.transaction_at || null, Number(body.amount), body.currency || 'BDT',
         body.category_id || null, body.project_id || null, body.party_name || null,
         body.payment_method || null, body.reference || null, body.description || null, body.notes || null]
     );
