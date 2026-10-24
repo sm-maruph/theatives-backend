@@ -36,13 +36,14 @@ const toProject = (row) => ({
   invoicedValue: Number(row.invoiced_value || 0),
   accountsReceivable: Number(row.accounts_receivable || 0),
   totalProjectExpenses: Number(row.total_project_expenses || 0),
+  cashProfit: Number(row.cash_profit || 0),
   profit: Number(row.profit || 0), profitLabel: row.profit_label,
 });
 
 async function getProject(id) {
   const [rows] = await db.query(
     `select p.*, s.received_cash, s.invoiced_value, s.accounts_receivable,
-            s.total_project_expenses, s.profit, s.profit_label
+            s.total_project_expenses, s.profit, s.cash_profit, s.profit_label
        from public.projects p
        left join public.project_financial_summary s on s.project_id = p.id
       where p.id = ?`, [id]
@@ -54,7 +55,7 @@ router.get('/projects', async (req, res) => {
   try {
     const [rows] = await db.query(
       `select p.*, s.received_cash, s.invoiced_value, s.accounts_receivable,
-              s.total_project_expenses, s.profit, s.profit_label
+              s.total_project_expenses, s.profit, s.cash_profit, s.profit_label
          from public.projects p
          left join public.project_financial_summary s on s.project_id = p.id
         order by p.created_at desc`
