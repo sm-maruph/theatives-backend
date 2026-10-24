@@ -14,6 +14,8 @@ const blogsServices = require('./routes/blogs');
 const galleryServices = require('./routes/gallery');
 const showcaseServices = require('./routes/showcase');
 const memberServices = require('./routes/member');
+const projectServices = require('./routes/projects');
+const financeServices = require('./routes/finance');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -44,6 +46,8 @@ app.get('/', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', dashboardRoutes); 
 app.use('/api/admin/dashboard', dashboardServices);
+app.use('/api/admin/dashboard', projectServices);
+app.use('/api/admin/dashboard/finance', financeServices);
 app.use('/api/admin/dashboardservices', reviewServices);
 app.use('/api/admin/dashboardservices', clientServices);
 app.use('/api/admin/dashboardservices', jobsServices);

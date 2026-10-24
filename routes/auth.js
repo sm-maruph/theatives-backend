@@ -2,22 +2,19 @@ const express = require('express');
 const router = express.Router();
 const db = require('../config/db');
 const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
 
 // Login Route
 // Login Route using async/await
 router.post('/login', async (req, res) => {
   const { username, password } = req.body;
-  console.log('Login attempt:', username, password);
-
   try {
     const [results] = await db.query(
-      'SELECT * FROM admin WHERE username = ? AND password = ?',
-      [username, password]
+      'SELECT id, username, password FROM public.admin WHERE username = ?',
+      [username]
     );
 
-    console.log('Query results:', results);
-
-    if (results.length === 0) {
+    if (results.length === 0 || !(await bcrypt.compare(password, results[0].password))) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -29,7 +26,7 @@ router.post('/login', async (req, res) => {
 
     res.json({ message: 'Login successful', token });
   } catch (err) {
-    console.error('Login error:', err);
+    console.error('Login error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

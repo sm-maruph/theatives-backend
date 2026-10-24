@@ -4,11 +4,41 @@ const db = require('../config/db');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const { memberUpload } = require('../config/uploads');
+const { getStorageClient } = require('../config/supabaseStorage');
+const requireAdmin = require('../middleware/requireAdmin');
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, callback) => callback(null, file.mimetype.startsWith('image/')),
+});
 
 router.use((req, res, next) => {
   console.log(`Incoming request: ${req.method} ${req.path}`);
   next();
+});
+
+// Upload member images through the trusted backend so the secret storage key
+// never reaches the browser. The bucket is public-read; writes use this API.
+router.post('/member-upload', requireAdmin, imageUpload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'An image file is required.' });
+    const extension = req.file.mimetype === 'image/webp' ? '.webp' : path.extname(req.file.originalname).toLowerCase();
+    const objectPath = `members/${Date.now()}-${randomUUID()}${extension || '.img'}`;
+    const { error } = await getStorageClient().storage
+      .from('member-images')
+      .upload(objectPath, req.file.buffer, {
+        contentType: req.file.mimetype,
+        upsert: false,
+      });
+    if (error) throw error;
+    const { data } = getStorageClient().storage.from('member-images').getPublicUrl(objectPath);
+    res.status(201).json({ filePath: data.publicUrl, publicUrl: data.publicUrl });
+  } catch (error) {
+    console.error('Member image upload failed:', error.message);
+    res.status(500).json({ error: 'Member image upload failed.' });
+  }
 });
 
 // GET all members
@@ -26,7 +56,9 @@ router.get('/members', async (req, res) => {
 router.post('/members', memberUpload.single('member_image'), async (req, res) => {
   try {
     const { name, nickname, position } = req.body;
-    const member_image = req.file ? `/asset/image/memberUpload/${req.file.filename}` : null;
+    const member_image = req.file
+      ? `/asset/image/memberUpload/${req.file.filename}`
+      : req.body.member_image || null;
 
     const [result] = await db.query(
       'INSERT INTO members (name, nickname, position, member_image) VALUES (?, ?, ?, ?)',
@@ -56,7 +88,9 @@ router.put('/members/:id', memberUpload.single('member_image'), async (req, res)
     const [oldMember] = await db.query('SELECT member_image FROM members WHERE id = ?', [id]);
     const oldImagePath = oldMember[0]?.member_image;
 
-    const member_image = req.file ? `/asset/image/memberUpload/${req.file.filename}` : oldImagePath;
+    const member_image = req.file
+      ? `/asset/image/memberUpload/${req.file.filename}`
+      : req.body.member_image || oldImagePath;
 
     await db.query(
       'UPDATE members SET name = ?, nickname = ?, position = ?, member_image = ? WHERE id = ?',
@@ -64,7 +98,7 @@ router.put('/members/:id', memberUpload.single('member_image'), async (req, res)
     );
 
     // Delete old image if a new one was uploaded
-    if (req.file && oldImagePath) {
+    if (req.file && oldImagePath?.startsWith('/asset/image/memberUpload/')) {
       const oldFilePath = path.join(__dirname, '../src', oldImagePath);
       fs.unlink(oldFilePath, (err) => {
         if (err) console.error('Error deleting old image:', err);
@@ -89,7 +123,7 @@ router.delete('/members/:id', async (req, res) => {
 
     await db.query('DELETE FROM members WHERE id = ?', [id]);
 
-    if (memberImage) {
+    if (memberImage?.startsWith('/asset/image/memberUpload/')) {
       const imagePath = path.join(__dirname, '../src', memberImage);
       fs.unlink(imagePath, (err) => {
         if (err) console.error('Error deleting image file:', err);
