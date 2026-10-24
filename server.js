@@ -42,6 +42,16 @@ app.get('/', (req, res) => {
   res.send('API is running...');
 });
 
+app.get('/api/health', async (req, res) => {
+  try {
+    await require('./config/db').query('SELECT 1 AS connected');
+    res.json({ status: 'ok', database: 'connected' });
+  } catch (error) {
+    console.error('Health check database failure:', error.message);
+    res.status(503).json({ status: 'error', database: 'disconnected' });
+  }
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', dashboardRoutes); 
