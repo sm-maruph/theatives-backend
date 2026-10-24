@@ -9,10 +9,11 @@ const getKey = () => {
 };
 
 exports.encryptField = (value) => {
-  if (!value) return null;
+  const normalized = String(value ?? '').trim();
+  if (!normalized || /^(n\/?a|none|not applicable)$/i.test(normalized)) return null;
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
-  const ciphertext = Buffer.concat([cipher.update(String(value), 'utf8'), cipher.final()]);
+  const ciphertext = Buffer.concat([cipher.update(normalized, 'utf8'), cipher.final()]);
   return `v1:${iv.toString('base64')}:${cipher.getAuthTag().toString('base64')}:${ciphertext.toString('base64')}`;
 };
 

@@ -94,7 +94,12 @@ router.post('/projects', async (req, res) => {
     res.status(201).json(await getProject(result.insertId));
   } catch (error) {
     console.error('Could not create project:', error.message);
-    res.status(500).json({ error: 'Could not create project' });
+    if (error.message.includes('FIELD_ENCRYPTION_KEY')) {
+      return res.status(503).json({
+        error: 'Configure a valid FIELD_ENCRYPTION_KEY in the backend environment, or leave the client email password blank.',
+      });
+    }
+    res.status(500).json({ error: 'Could not create project. Check the backend logs for the database error.' });
   }
 });
 
