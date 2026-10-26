@@ -97,14 +97,14 @@ router.get('/payables', async (req, res) => {
 
 router.post('/payables', async (req, res) => {
   try {
-    const { payee_id, project_id, title, amount_due, due_date, notes } = req.body || {};
-    if (!payee_id || !project_id || !title || !Number.isFinite(Number(amount_due)) || Number(amount_due) <= 0) {
-      return res.status(400).json({ error: 'Person, project, title, and a positive amount are required.' });
+    const { payee_id, project_id, title, role, amount_due, due_date, notes } = req.body || {};
+    if (!payee_id || !project_id || !title || !role || !Number.isFinite(Number(amount_due)) || Number(amount_due) <= 0) {
+      return res.status(400).json({ error: 'Person, project, work, role/team, and a positive amount are required.' });
     }
     const [result] = await db.query(
-      `insert into public.project_payables (payee_id, project_id, title, amount_due, due_date, notes)
-       values (?, ?, ?, ?, ?::date, ?)`,
-      [payee_id, project_id, String(title).trim(), Number(amount_due), due_date || null, notes || null]
+      `insert into public.project_payables (payee_id, project_id, title, role, amount_due, due_date, notes)
+       values (?, ?, ?, ?, ?, ?::date, ?)`,
+      [payee_id, project_id, String(title).trim(), String(role).trim(), Number(amount_due), due_date || null, notes || null]
     );
     const [rows] = await db.query('select * from public.project_payable_balances where id = ?', [result.insertId]);
     res.status(201).json(rows[0]);

@@ -287,11 +287,13 @@ create table if not exists public.project_payables (
   payee_id bigint not null references public.payees(id) on delete restrict,
   project_id bigint not null references public.projects(id) on delete restrict,
   title text not null,
+  role text not null default '',
   amount_due numeric(14, 2) not null check (amount_due > 0),
   due_date date,
   notes text,
   created_at timestamptz not null default now()
 );
+alter table public.project_payables add column if not exists role text not null default '';
 create index if not exists project_payables_project_idx on public.project_payables(project_id);
 create index if not exists project_payables_payee_idx on public.project_payables(payee_id);
 alter table public.financial_transactions
@@ -306,12 +308,13 @@ select ob.id, ob.payee_id, pe.name as payee_name, ob.project_id, pr.name as proj
   coalesce(sum(t.amount), 0)::numeric(14, 2) as paid_amount,
   greatest(ob.amount_due - coalesce(sum(t.amount), 0), 0)::numeric(14, 2) as remaining_balance,
   case when coalesce(sum(t.amount), 0) >= ob.amount_due then 'paid'
-       when coalesce(sum(t.amount), 0) > 0 then 'partial' else 'unpaid' end as payment_status
+       when coalesce(sum(t.amount), 0) > 0 then 'partial' else 'unpaid' end as payment_status,
+  ob.role
 from public.project_payables ob
 join public.payees pe on pe.id = ob.payee_id
 join public.projects pr on pr.id = ob.project_id
 left join public.financial_transactions t on t.payable_id = ob.id and t.transaction_type = 'expense'
-group by ob.id, pe.name, pr.name;
+group by ob.id, pe.name, pr.name, ob.role;
 
 create or replace view public.payee_balances
 with (security_invoker = true) as
